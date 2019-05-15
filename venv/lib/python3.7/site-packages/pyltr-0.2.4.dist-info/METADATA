@@ -1,0 +1,17 @@
+Metadata-Version: 2.0
+Name: pyltr
+Version: 0.2.4
+Summary: Python learning to rank (LTR) toolkit.
+Home-page: https://github.com/jma127/pyltr
+Author: Jerry Ma
+Author-email: jmnospam@mail.com
+License: BSD-new
+Platform: UNKNOWN
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: scikit-learn
+Requires-Dist: scipy
+
+UNKNOWN
+
+
