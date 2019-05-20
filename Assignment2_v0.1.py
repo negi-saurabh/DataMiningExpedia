@@ -8,9 +8,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import xgboost as xgb
-from sklearn.model_selection import train_test_split
 import pyltr
-from pyltr.models import LambdaMART
 
 def clean(df):
     #print('original shape = ', df.shape)
@@ -34,6 +32,7 @@ def clean(df):
     #print('cleaned shape = ', df.shape)
     #print(round(df.isnull().sum()/len(df),2))
     return(df)
+
     
 def clean_test(df):
     #print('original shape = ', df.shape)
@@ -54,6 +53,7 @@ def clean_test(df):
     #print('cleaned shape = ', df.shape)
     #print(round(df.isnull().sum()/len(df),2))
     return(df) 
+
 
 def exploration(df):
     print('separate searches: ',len(df.srch_id.value_counts()))
@@ -95,6 +95,7 @@ def exploration(df):
     plt.subplot(3,3,6)
     plt.bar(x,y)
 
+
 def form_train_set(df,S):
     sample = df.iloc[0:S]
     good = sample[sample.score >0]
@@ -114,6 +115,7 @@ def form_train_set(df,S):
     X = np.array(train)
     return(X,y,qids,groups)
 
+
 def form_valid_set(df,S):
     valid = df.iloc[S:len(df)]
     valid = valid.reset_index(drop = True)
@@ -125,27 +127,13 @@ def form_valid_set(df,S):
     return(X,y,qids,groups)
 
 
-df = pd.read_csv('training_set_VU_DM.csv') # read in training data
-df = clean(df) # clean training data
-# exploration(df)
-S = 500000 # Enter samplesize of trainingset
-[TX,Ty,Tqids,Tgroups] = form_train_set(df,S) # form trainingset
-[VX,Vy,Vqids,Vgroups] = form_valid_set(df,S) # form validationset
-
-
-
-df_test = pd.read_csv('test_set_VU_DM.csv') # read in test data
-df_test = clean_test(df_test) # clean test data
-srch_id = df_test.srch_id
-prop_id = df_test.prop_id
-df_test = df_test.drop(['srch_id'],axis = 1)
-EX = np.array(df_test)
-
-def LMART():
-    metric = pyltr.metrics.NDCG(k=10) # set parameters for LambdaMART
+def LMART(S,VX,Vy,Vqids):
+    [TX,Ty,Tqids,Tgroups] = form_train_set(df,S)
+    metric = pyltr.metrics.NDCG(k=10) 
     monitor = pyltr.models.monitors.ValidationMonitor(
-            VX, Vy, Vqids, metric=metric, stop_after=100)    
-    model_LM = pyltr.models.LambdaMART(
+            VX, Vy, Vqids, metric=metric, stop_after=1)    
+    # set parameters for LambdaMART
+    model = pyltr.models.LambdaMART(
     metric=metric,
     n_estimators=100,
     learning_rate=0.1,
@@ -155,48 +143,68 @@ def LMART():
     min_samples_leaf=15,
     verbose=1
     ) # end parameters
-    model_LM.fit(X=TX,y=Ty,qids=Tqids,monitor=monitor) # fit model    
-    predLMART = model_LM.predict(EX)
-    return(predLMART,monitor)
+    model.fit(X=TX,y=Ty,qids=Tqids,monitor=monitor) # fit model    
+    predLMART = model.predict(EX) # make prediction
+    return(predLMART)
 
 
 
-def XGBoost(TX,Ty,Tqids,VX,Vy,Vqids):
-    params = {'objective': 'rank:pairwise', 'learning_rate': 0.1,
+def XGBoost(S,VX,Vy,Vgroups):
+    [TX,Ty,Tqids,Tgroups] = form_train_set(df,S)
+    params = {'objective': 'rank:ndcg', 'learning_rate': 0.1,
           'gamma': 1.0, 'min_child_weight': 0.1,
-          'max_depth': 6, 'n_estimators': 100}
+          'max_depth': 5, 'n_estimators': 100}
     model = xgb.sklearn.XGBRanker(**params)
-    model.fit(TX, Ty, Tgroups, eval_set=[(VX, Vy)], eval_group=[Vgroups])
+    model.fit(TX, Ty, Tgroups, eval_set=[(VX, Vy)], 
+            eval_group=[Vgroups], eval_metric = 'ndcg')
+    evals_result = model.evals_result
+    print(evals_result['eval_0']['ndcg'][-1])
     predXGBoost = model.predict(EX)
     return(predXGBoost)
 
-def XGBoostLin(TX,Ty,Tqids,VX,Vy,Vqids):
-    params = {'booster': 'gblinear', 'objective': 'rank:pairwise', 'learning_rate': 0.1,
+
+def XGBoostLin(S,VX,Vy,Vgroups):
+    [TX,Ty,Tqids,Tgroups] = form_train_set(df,S)
+    params = {'booster': 'gblinear', 'objective': 'rank:ndcg', 'learning_rate': 0.1,
           'gamma': 1.0, 'min_child_weight': 0.1,
-          'max_depth': 6, 'n_estimators': 100}
+          'max_depth': 5, 'n_estimators': 100}
     model = xgb.sklearn.XGBRanker(**params)
-    model.fit(TX, Ty, Tgroups, eval_set=[(VX, Vy)], eval_group=[Vgroups])
+    model.fit(TX, Ty, Tgroups, eval_set=[(VX, Vy)], eval_group=[Vgroups],eval_metric = 'ndcg')
+    evals_result = model.evals_result
+    print(evals_result['eval_0']['ndcg'][-1])
     predXGBoost = model.predict(EX)
     return(predXGBoost)
 
-#def create_result(p,srch_id,prop_id)
+
+def create_result(p,srch_id,prop_id):
+    prediction = pd.DataFrame(p,columns=['prob'])
+    prediction = prediction.join(srch_id)
+    prediction = prediction.join(prop_id)
+    result = prediction.sort_values(by=['srch_id', 'prob'], ascending=[True, False])
+    result.reset_index(drop = True, inplace = True)
+    result = result.drop('prob',axis =1)
+    return(result)
 
 
-#[p,monitor] = LMART()
-p1 = XGBoost(TX,Ty,Tgroups,VX,Vy,Vgroups)
-p = XGBoostLin(TX,Ty,Tgroups,VX,Vy,Vgroups)
-p2 = (p+p1)/2 # taking average of two gradient boosted algorithms
+df = pd.read_csv('training_set_VU_DM.csv') # read in training data
+df = clean(df) # clean training data
+# exploration(df)
 
-prediction = pd.DataFrame(p2,columns=['prob'])
-prediction = prediction.join(srch_id)
-prediction = prediction.join(prop_id)
+df_test = pd.read_csv('test_set_VU_DM.csv') # read in test data
+df_test = clean_test(df_test) # clean test data
+srch_id = df_test.srch_id
+prop_id = df_test.prop_id
+df_test = df_test.drop(['srch_id'],axis = 1)
+EX = np.array(df_test)
 
-result = prediction.sort_values(by=['srch_id', 'prob'], ascending=[True, False])
-result.reset_index(drop = True, inplace = True)
-result = result.drop('prob',axis =1)
-result.to_csv('submissionGR45_XGBOOST_COMBI.csv',index = False)
+S = 2000000 # Enter samplesize of trainingset
+[VX,Vy,Vqids,Vgroups] = form_valid_set(df,S) # form validationset
 
-ptree = pd.read_csv('submissionGR45_XGBOOST.csv')
-plin = pd.read_csv('submissionGR45_XGBOOST_lin.csv')
+p0 = LMART(S,VX,Vy,Vqids)
+p1 = XGBoost(S,VX,Vy,Vgroups)
+p2 = XGBoostLin(S,VX,Vy,Vgroups)
 
+stacked_average = (p1+p2)/2 # taking average of all algorithms
+result = create_result(stacked_average,srch_id,prop_id)
+result.to_csv('submissionGR45_XGBOOST_LMART_17_05_a.csv',index = False)
 
